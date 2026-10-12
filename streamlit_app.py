@@ -1,151 +1,123 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Настройка страницы дашборда
+st.set_page_config(page_title="Дашборд: Анализ чаевых", layout="wide")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
+# 1. Загрузка данных
 @st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+def load_data():
+    # Автоматически загружаем встроенный датасет tips из seaborn
+    import seaborn as sns
+    df = sns.load_dataset('tips')
+    # Добавляем ваш расчетный столбец процента чаевых из работы
+    df['tip_percent'] = (df['tip'] / df['total_bill']) * 100
+    return df
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+tips = load_data()
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# Заголовок дашборда
+st.title("Интерактивный дашборд: Счета и чаевые в ресторане")
+st.markdown("Финальный проект: Исследовательский анализ датасета tips")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# --- БОКОВАЯ ПАНЕЛЬ С ФИЛЬТРАМИ ---
+st.sidebar.header("Фильтры данных")
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+# Фильтр по дням недели
+all_days = tips['day'].unique().tolist()
+selected_days = st.sidebar.multiselect("Выберите дни недели:", all_days, default=all_days)
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# Фильтр по времени суток
+all_times = tips['time'].unique().tolist()
+selected_times = st.sidebar.multiselect("Выберите время суток:", all_times, default=all_times)
 
-    return gdp_df
+# Фильтр по курению
+smoker_filter = st.sidebar.radio("Статус курения гостей:", ["Все", "Курящие", "Некурящие"])
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
+# Применение фильтров к датасету
+filtered_tips = tips[
+    (tips['day'].isin(selected_days)) & 
+    (tips['time'].isin(selected_times))
 ]
 
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
+if smoker_filter == "Курящие":
+    filtered_tips = filtered_tips[filtered_tips['smoker'] == 'Yes']
+elif smoker_filter == "Некурящие":
+    filtered_tips = filtered_tips[filtered_tips['smoker'] == 'No']
 
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+# --- БЛОК С ОСНОВНЫМИ МЕТРИКАМИ (KPI) ---
+st.subheader("Ключевые показатели (KPI)")
+col1, col2, col3, col4 = st.columns(4)
 
-st.header(f'GDP in {to_year}', divider='gray')
+with col1:
+    st.metric("Всего чеков", len(filtered_tips))
+with col2:
+    st.metric("Средний чек", f"${filtered_tips['total_bill'].mean():.2f}")
+with col3:
+    st.metric("Средние чаевые", f"${filtered_tips['tip'].mean():.2f}")
+with col4:
+    st.metric("Медианный процент чаевых", f"{filtered_tips['tip_percent'].median():.2f}%")
 
-''
 
-cols = st.columns(4)
+# --- БЛОК ВИЗУАЛИЗАЦИИ ---
+st.markdown("---")
+st.subheader("Анализ зависимостей и распределений")
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+# Ряд 1: Связь счета и чаевых + Процент чаевых по дням
+row1_col1, row1_col2 = st.columns(2)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+with row1_col1:
+    st.markdown("**Связь между суммой счета и чаевыми**")
+    fig_scatter = px.scatter(
+        filtered_tips,
+        x='total_bill',
+        y='tip',
+        color='day',
+        size='size',
+        hover_data=['sex', 'smoker', 'time', 'tip_percent'],
+        labels={'total_bill': 'Сумма счета ($)', 'tip': 'Чаевые ($)', 'day': 'День', 'size': 'Размер компании'}
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+with row1_col2:
+    st.markdown("**Распределение процента чаевых по дням недели (Boxplot)**")
+    fig_box = px.box(
+        filtered_tips,
+        x='day',
+        y='tip_percent',
+        color='day',
+        labels={'day': 'День недели', 'tip_percent': 'Процент чаевых (%)'}
+    )
+    st.plotly_chart(fig_box, use_container_width=True)
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# Ряд 2: Средние чаевые по категориям
+st.markdown("---")
+st.subheader("Сравнение чаевых по категориям")
+row2_col1, row2_col2 = st.columns(2)
+
+with row2_col1:
+    st.markdown("**Средний размер чаевых по дням недели**")
+    df_day_mean = filtered_tips.groupby('day', as_index=False, observed=False)['tip'].mean().round(2)
+    fig_bar_day = px.bar(
+        df_day_mean, x='day', y='tip', color='day',
+        labels={'day': 'День недели', 'tip': 'Средние чаевые ($)'}, text_auto=True
+    )
+    st.plotly_chart(fig_bar_day, use_container_width=True)
+
+with row2_col2:
+    st.markdown("**Средний процент чаевых в зависимости от размера компании**")
+    df_size_mean = filtered_tips.groupby('size', as_index=False, observed=False)['tip_percent'].mean().round(2)
+    fig_bar_size = px.bar(
+        df_size_mean, x='size', y='tip_percent',
+        labels={'size': 'Размер компании (чел.)', 'tip_percent': 'Средний процент чаевых (%)'},
+        text_auto=True, color_discrete_sequence=['#45039f']
+    )
+    st.plotly_chart(fig_bar_size, use_container_width=True)
+
+
+# --- ТАБЛИЦА ДАННЫХ ---
+st.markdown("---")
+with st.expander("Посмотреть отфильтрованные сырые данные"):
+    st.dataframe(filtered_tips, use_container_width=True)
